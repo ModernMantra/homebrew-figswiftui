@@ -39,6 +39,26 @@ func CollectColors(root *Node) []ColorDef {
 	var order []string
 	textRank := 0
 
+	// A color used as a button's fill *and* as the active page-indicator
+	// dot's fill is almost certainly the app's real accent/brand color.
+	// Naming it "AccentColor" (rather than e.g. "ButtonPrimaryBackground")
+	// matters beyond labeling: SwiftUI treats a colorset literally named
+	// "AccentColor" as the app-wide tint, so generated code that reaches
+	// for the system's own Color.accentColor (the page-indicator dots, for
+	// instance) resolves to the real brand color instead of silently
+	// falling back to the system default blue.
+	accentCandidates := map[string]bool{}
+	var collectAccent func(n *Node)
+	collectAccent = func(n *Node) {
+		if n.Kind == KindDotIndicatorGroup && n.DotActiveColor != "" {
+			accentCandidates[n.DotActiveColor] = true
+		}
+		for _, c := range n.Children {
+			collectAccent(c)
+		}
+	}
+	collectAccent(root)
+
 	assign := func(hex, role string) {
 		hex = normalizeHex(hex)
 		if hex == "" {
@@ -53,12 +73,20 @@ func CollectColors(root *Node) []ColorDef {
 
 	var walk func(n *Node, depth int)
 	walk = func(n *Node, depth int) {
-		if n.Kind == KindStatusBarChrome {
+		// Status-bar chrome is dropped entirely, and an illustration's
+		// internal shape colors are already baked as literal hex fills into
+		// its generated SVG — harvesting them here too would let a
+		// coincidentally-matching decorative color claim a semantic role
+		// (Background, AccentColor, ...) ahead of the real button/text/root
+		// usage that comes later in document order.
+		if n.Kind == KindStatusBarChrome || n.Kind == KindIllustrationGroup {
 			return
 		}
 		if bg := n.Block.Props["background"]; bg != "" {
 			role := "Background"
 			switch {
+			case n.Kind == KindButton && accentCandidates[normalizeHex(bg)]:
+				role = "AccentColor"
 			case n.Kind == KindButton:
 				role = "ButtonPrimaryBackground"
 			case depth == 0:
@@ -67,6 +95,22 @@ func CollectColors(root *Node) []ColorDef {
 				role = "DialogBackground"
 			}
 			assign(bg, role)
+		}
+		if n.Kind == KindButton {
+			if bc := borderHex(n.Block.Props["border"]); bc != "" {
+				assign(bc, "ButtonSecondaryBorder")
+			}
+			// A button's own label color (e.g. a plain text-link button
+			// like "Skip") lives directly on the button block itself, not
+			// on a KindText child — codegen's buttonLabelColor() falls back
+			// to a child's color only when the button node has none of its
+			// own, so that same direct color must be registered here too,
+			// or the lookup silently misses and the label defaults to
+			// whatever tint SwiftUI gives an unstyled Button (the app's
+			// accent color).
+			if c := n.Block.Props["color"]; c != "" {
+				assign(c, "ButtonSecondaryLabel")
+			}
 		}
 		if n.Kind == KindText {
 			if c := n.Block.Props["color"]; c != "" {

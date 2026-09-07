@@ -29,6 +29,7 @@ type Node struct {
 	// collapsed down to a single template child.
 	DotCount       int
 	DotActiveIndex int
+	DotActiveColor string // normalized hex of the active dot's fill, if any
 }
 
 type stackFrame struct {
@@ -131,21 +132,78 @@ func parsePx(s string) (float64, bool) {
 	return n, true
 }
 
-var calcPercentRe = regexp.MustCompile(`calc\(\s*(-?[\d.]+)%`)
+var (
+	calcExprRe  = regexp.MustCompile(`calc\(([^)]*)\)`)
+	calcTermRe  = regexp.MustCompile(`[+-][\d.]+(?:%|px(?:/[\d.]+)?)`)
+	pxDivTermRe = regexp.MustCompile(`^([\d.]+)px/([\d.]+)$`)
+	pxTermRe    = regexp.MustCompile(`^([\d.]+)px$`)
+)
 
-func parsePercent(s string) (float64, bool) {
+// resolveDimension resolves a Figma CSS length against dimension (the
+// relevant parent width or height), handling a plain percentage ("50%") or
+// a calc() expression. Figma commonly emits centering as
+// `calc(50% - 600px/2)` — a percentage term plus one or more signed px
+// terms (some divided, e.g. "600px/2" meaning half that length) — all of
+// which must be summed together, not just the leading percentage, or a
+// same-size-as-parent centered layer resolves to its parent's *middle*
+// instead of (0,0). Returns false for a plain, non-percentage px value (the
+// caller should fall back to parsePx for that case).
+func resolveDimension(s string, dimension float64) (float64, bool) {
 	s = strings.TrimSpace(s)
-	if strings.HasSuffix(s, "%") {
+	if strings.HasSuffix(s, "%") && !strings.Contains(s, "calc(") {
 		if n, err := strconv.ParseFloat(strings.TrimSuffix(s, "%"), 64); err == nil {
-			return n, true
+			return n / 100 * dimension, true
+		}
+		return 0, false
+	}
+
+	m := calcExprRe.FindStringSubmatch(s)
+	if m == nil {
+		return 0, false
+	}
+	inner := strings.ReplaceAll(m[1], " ", "")
+	if inner == "" {
+		return 0, false
+	}
+	if inner[0] != '+' && inner[0] != '-' {
+		inner = "+" + inner
+	}
+	terms := calcTermRe.FindAllString(inner, -1)
+	if len(terms) == 0 {
+		return 0, false
+	}
+
+	total := 0.0
+	for _, t := range terms {
+		sign := 1.0
+		if t[0] == '-' {
+			sign = -1.0
+		}
+		body := t[1:]
+		switch {
+		case strings.HasSuffix(body, "%"):
+			pct, err := strconv.ParseFloat(strings.TrimSuffix(body, "%"), 64)
+			if err != nil {
+				return 0, false
+			}
+			total += sign * (pct / 100 * dimension)
+		default:
+			if dm := pxDivTermRe.FindStringSubmatch(body); dm != nil {
+				num, _ := strconv.ParseFloat(dm[1], 64)
+				den, _ := strconv.ParseFloat(dm[2], 64)
+				if den == 0 {
+					return 0, false
+				}
+				total += sign * (num / den)
+			} else if pm := pxTermRe.FindStringSubmatch(body); pm != nil {
+				num, _ := strconv.ParseFloat(pm[1], 64)
+				total += sign * num
+			} else {
+				return 0, false
+			}
 		}
 	}
-	if m := calcPercentRe.FindStringSubmatch(s); m != nil {
-		if n, err := strconv.ParseFloat(m[1], 64); err == nil {
-			return n, true
-		}
-	}
-	return 0, false
+	return total, true
 }
 
 var (
@@ -188,7 +246,7 @@ func classify(n *Node) {
 	if dots := filterByName(n.Children, dotItemNamePattern); len(dots) > 1 {
 		n.Kind = KindDotIndicatorGroup
 		n.DotCount = len(dots)
-		n.DotActiveIndex = activeDotIndex(n.Children, dotItemNamePattern)
+		n.DotActiveIndex, n.DotActiveColor = activeDotIndex(n.Children, dotItemNamePattern)
 		n.Children = dots[:1]
 	}
 
@@ -204,7 +262,7 @@ func classify(n *Node) {
 // shared parent instead of nesting under its own item — see BuildTree's
 // no-order attachment rule — so document order is the only reliable way to
 // pair each dot item with the fill that immediately follows it.
-func activeDotIndex(rawChildren []*Node, itemRe *regexp.Regexp) int {
+func activeDotIndex(rawChildren []*Node, itemRe *regexp.Regexp) (int, string) {
 	var colors []string
 	inItem := false
 	cur := ""
@@ -239,10 +297,10 @@ func activeDotIndex(rawChildren []*Node, itemRe *regexp.Regexp) int {
 	}
 	for i, c := range colors {
 		if c != "" && c != majority {
-			return i
+			return i, c
 		}
 	}
-	return 0
+	return 0, majority
 }
 
 func filterByName(nodes []*Node, re *regexp.Regexp) []*Node {

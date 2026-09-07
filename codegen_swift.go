@@ -94,6 +94,23 @@ func (g *swiftGen) findDots(n *Node) {
 	}
 }
 
+// buttonLabelColor finds the label color for a KindButton node. writeNode
+// never recurses into a button's children (it renders as a single flat
+// Button(...)), but the color is still present on a descendant block's own
+// Props (typically a generically-named "Placeholder" text child) even
+// though that descendant is never itself walked.
+func (g *swiftGen) buttonLabelColor(n *Node) string {
+	if c := g.colorName(n.Block.Props["color"]); c != "" {
+		return c
+	}
+	for _, c := range n.Children {
+		if found := g.buttonLabelColor(c); found != "" {
+			return found
+		}
+	}
+	return ""
+}
+
 func (g *swiftGen) colorName(hex string) string {
 	n := normalizeHex(hex)
 	if n == "" {
@@ -123,8 +140,33 @@ func (g *swiftGen) writeNode(b *strings.Builder, n *Node, depth int) {
 		varName := "on" + sanitizeIdentifier(n.Block.Name, true)
 		fmt.Fprintf(b, "%s// TODO(figswiftui): confirm this label matches the rendered/localized text\n", ind)
 		fmt.Fprintf(b, "%sButton(%s, action: %s)\n", ind, swiftStringLiteral(textOf(n)), varName)
-		if col := g.colorName(n.Block.Props["background"]); col != "" {
-			fmt.Fprintf(b, "%s    .background(Color(\"%s\"))\n", ind, col)
+		if labelColor := g.buttonLabelColor(n); labelColor != "" {
+			fmt.Fprintf(b, "%s    .foregroundStyle(Color(\"%s\"))\n", ind, labelColor)
+		}
+		// A plain text-link button (e.g. "Skip") has no fill of its own —
+		// giving it button-chrome padding/frame/background/clipShape it was
+		// never designed with would visibly misrender it as a boxed button.
+		bgColorName := g.colorName(n.Block.Props["background"])
+		if bgColorName != "" {
+			if pad := paddingModifier(n); pad != "" {
+				fmt.Fprintf(b, "%s    %s\n", ind, pad)
+			} else {
+				fmt.Fprintf(b, "%s    .padding(.horizontal, 14)\n", ind)
+				fmt.Fprintf(b, "%s    .padding(.vertical, 10)\n", ind)
+			}
+			if w, ok := parsePx(n.Block.Props["width"]); ok {
+				fmt.Fprintf(b, "%s    .frame(width: %s)\n", ind, trimNum(w))
+			}
+			fmt.Fprintf(b, "%s    .background(Color(\"%s\"))\n", ind, bgColorName)
+			radius := 8.0
+			if br, ok := parsePx(n.Block.Props["border-radius"]); ok {
+				radius = br
+			}
+			shape := fmt.Sprintf("RoundedRectangle(cornerRadius: %s)", trimNum(radius))
+			if borderColor := g.colorName(borderHex(n.Block.Props["border"])); borderColor != "" {
+				fmt.Fprintf(b, "%s    .overlay(%s.stroke(Color(\"%s\")))\n", ind, shape, borderColor)
+			}
+			fmt.Fprintf(b, "%s    .clipShape(%s)\n", ind, shape)
 		}
 
 	case KindDotIndicatorGroup:
@@ -170,6 +212,17 @@ func textOf(n *Node) string {
 		return "TODO"
 	}
 	return name
+}
+
+// borderHex extracts the color from a CSS border shorthand, e.g.
+// "1px solid #EDEDED" -> "#EDEDED".
+func borderHex(border string) string {
+	for _, field := range strings.Fields(border) {
+		if hexColorRe.MatchString(field) {
+			return field
+		}
+	}
+	return ""
 }
 
 func parseOpacity(s string) (float64, bool) {

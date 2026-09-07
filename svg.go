@@ -78,24 +78,24 @@ func resolveBox(props map[string]string, parentW, parentH float64) (x, y, w, h f
 	if ph, ok := parsePx(props["height"]); ok {
 		h = ph
 	}
-	if lp, ok := parsePercent(props["left"]); ok {
-		x = lp / 100 * parentW
+	if lx, ok := resolveDimension(props["left"], parentW); ok {
+		x = lx
 	} else if lx, ok := parsePx(props["left"]); ok {
 		x = lx
 	}
-	if tp, ok := parsePercent(props["top"]); ok {
-		y = tp / 100 * parentH
+	if ty, ok := resolveDimension(props["top"], parentH); ok {
+		y = ty
 	} else if ty, ok := parsePx(props["top"]); ok {
 		y = ty
 	}
 	if w == 0 {
-		if rp, ok := parsePercent(props["right"]); ok {
-			w = parentW - x - (rp / 100 * parentW)
+		if rx, ok := resolveDimension(props["right"], parentW); ok {
+			w = parentW - x - rx
 		}
 	}
 	if h == 0 {
-		if bp, ok := parsePercent(props["bottom"]); ok {
-			h = parentH - y - (bp / 100 * parentH)
+		if bx, ok := resolveDimension(props["bottom"], parentH); ok {
+			h = parentH - y - bx
 		}
 	}
 	if w <= 0 {
