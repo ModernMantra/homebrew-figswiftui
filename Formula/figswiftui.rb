@@ -6,9 +6,20 @@ class Figswiftui < Formula
   license "MIT"
 
   depends_on "go" => :build
+  depends_on "tesseract" => :recommended
 
   def install
     system "go", "build", "-o", bin/"figswiftui", "."
+  end
+
+  def caveats
+    <<~EOS
+      tesseract is used only for --screenshot input with no companion --css:
+      it recognizes real text instead of a "TODO" placeholder. Everything
+      else (the primary --css-driven path, --batch, --match-project) works
+      the same with or without it — figswiftui detects its absence and
+      falls back automatically.
+    EOS
   end
 
   test do

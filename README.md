@@ -45,13 +45,22 @@ Run `figswiftui --help` for the full flag reference.
   right-click → Copy/Paste as → Copy as CSS). Must be plain text, not an
   RTF-wrapped paste.
 - `--screenshot` — a PNG/JPEG of the same screen. Alone (no `--css`), this
-  only yields a low-fidelity color/dimension skeleton with placeholder text
-  — there's no OCR, so real text and layout extraction needs a CSS export.
+  yields a color/dimension skeleton — real layout/structure still needs a
+  CSS export — but text is recognized via OCR (`brew install tesseract`;
+  installed by default alongside figswiftui, skip it with
+  `--without-tesseract` at install time) instead of a placeholder. Without
+  tesseract on PATH, figswiftui detects that and falls back automatically.
+
+In `--batch` mode, a `.css` byte-identical to one already processed, or a
+screenshot that's a near-duplicate of one already processed, is skipped
+with a warning — pass `--allow-duplicates` to generate it anyway.
 
 ## Known limitations
 
-- Screenshot-only input can't recover real structure or text (no AI/OCR by
-  design).
+- Screenshot-only input still can't recover real VStack/HStack structure,
+  spacing, or exact layout from pixels alone (that's what multimodal AI
+  does, deliberately out of scope here) — OCR closes the text gap, not the
+  structure gap.
 - Componentized button labels (e.g. a "Skip"/"Next" component whose Figma
   layer name may not match its true localized/rendered text) get a
   `// TODO` comment flagging them for manual verification.

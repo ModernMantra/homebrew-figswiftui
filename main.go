@@ -26,7 +26,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "figswiftui — generate a SwiftUI screen + Assets.xcassets from a Figma CSS\nexport and/or a screenshot. Fully offline: no AI, no network calls.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n  figswiftui --css <file> [--screenshot <file>] --name <bundle-name> [flags]\n  figswiftui --screenshot <file> --name <bundle-name> [flags]\n  figswiftui --batch <dir> [--name <prefix>] [flags]\n\nFlags:\n")
 		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nNote: --css must be plain-text (a real Figma \"copy as CSS\" paste). Screenshot-only\ninput (no --css) produces a lower-fidelity color/dimension skeleton with placeholder\ntext — full structure and text extraction needs a companion CSS export (no OCR is\nperformed).\n\nIn --batch mode, a .css byte-identical to one already processed, or a screenshot\nthat's a near-duplicate of one already processed, is skipped with a warning —\npass --allow-duplicates to generate it anyway.\n")
+		fmt.Fprintf(os.Stderr, "\nNote: --css must be plain-text (a real Figma \"copy as CSS\" paste). Screenshot-only\ninput (no --css) produces a color/dimension skeleton with real recognized text\n(via tesseract OCR, if installed — `brew install tesseract`) in place of a\nplaceholder; full VStack/HStack structure and spacing still needs a companion\nCSS export.\n\nIn --batch mode, a .css byte-identical to one already processed, or a screenshot\nthat's a near-duplicate of one already processed, is skipped with a warning —\npass --allow-duplicates to generate it anyway.\n")
 	}
 	flag.Parse()
 
@@ -296,10 +296,15 @@ func findIllustrationGroup(n *Node) *Node {
 	return nil
 }
 
-// skeletonFromScreenshot builds a minimal placeholder tree for
-// screenshot-only input (no companion CSS). No OCR/vision is performed, so
-// this intentionally cannot recover real structure or text — it surfaces a
-// clearly-marked TODO rather than silently emitting wrong content.
+// skeletonFromScreenshot builds a placeholder tree for screenshot-only
+// input (no companion CSS). Real layout/structure understanding still needs
+// a CSS export — no amount of image analysis recovers VStack/HStack
+// nesting or spacing from pixels alone — but real *text* is recoverable via
+// OCR (tesseract, if installed) instead of a "TODO" placeholder. Lines are
+// ordered top-to-bottom by their detected position; each line's own
+// detected height stands in for font-size so heading-vs-body text still
+// gets a plausible relative size via the same swiftFont() bucketing CSS
+// input uses.
 func skeletonFromScreenshot(s *ScreenshotInfo) *Node {
 	root := &Node{
 		Block: &Block{Name: "Screen", Props: map[string]string{
@@ -307,13 +312,42 @@ func skeletonFromScreenshot(s *ScreenshotInfo) *Node {
 		}},
 		Kind: KindContainer,
 	}
-	title := &Node{
-		Block: &Block{Name: "TODO: extract heading text from the screenshot", Props: map[string]string{
-			"font-family": "System", "font-size": "24px", "font-weight": "700",
-		}},
-		Kind: KindText,
+
+	var ocrLines []OCRLine
+	var ocrErr error
+	if s != nil && len(s.CroppedPNG) > 0 {
+		ocrLines, ocrErr = recognizeTextFromBytes(s.CroppedPNG)
 	}
-	root.Children = append(root.Children, title)
+
+	switch {
+	case len(ocrLines) > 0:
+		for _, line := range ocrLines {
+			weight := "400"
+			if line.H >= 20 {
+				weight = "700" // larger detected text reads as a heading
+			}
+			root.Children = append(root.Children, &Node{
+				Block: &Block{Name: line.Text, Props: map[string]string{
+					"font-family": "System",
+					"font-size":   fmt.Sprintf("%dpx", line.H),
+					"font-weight": weight,
+				}},
+				Kind: KindText,
+			})
+		}
+	default:
+		name := "TODO: extract heading text from the screenshot"
+		if ocrErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: OCR unavailable (%v) — using a placeholder instead of real text\n", ocrErr)
+		}
+		root.Children = append(root.Children, &Node{
+			Block: &Block{Name: name, Props: map[string]string{
+				"font-family": "System", "font-size": "24px", "font-weight": "700",
+			}},
+			Kind: KindText,
+		})
+	}
+
 	if s != nil && len(s.DominantColors) > 0 {
 		root.Block.Props["background"] = s.DominantColors[0]
 	}
