@@ -1,8 +1,8 @@
 class Figswiftui < Formula
   desc "Generate a SwiftUI screen + Assets.xcassets from a Figma CSS export or a screenshot (offline, no AI)"
   homepage "https://github.com/ModernMantra/homebrew-figswiftui"
-  url "https://github.com/ModernMantra/homebrew-figswiftui/archive/refs/tags/v0.8.0.tar.gz"
-  sha256 "1b01dfd154270bae361ce9f6bb480c9ebcd29d12172238c288f016082762016a"
+  url "https://github.com/ModernMantra/homebrew-figswiftui/archive/refs/tags/v0.8.1.tar.gz"
+  sha256 "995d0a34d0b3e0d6bee8a5f3c8b142a24b1c91a3f31bafc8571afb0409703e01"
   license "MIT"
 
   depends_on "go" => :build
