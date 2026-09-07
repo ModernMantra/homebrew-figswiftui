@@ -20,12 +20,13 @@ func main() {
 	out := flag.String("out", "output", "output root directory")
 	matchProject := flag.String("match-project", "", "optional path to an existing Xcode project; extracted colors that\nexactly match an existing *.colorset are renamed to reuse it")
 	batchDir := flag.String("batch", "", "process a directory of screen pairs instead of a single --css/--screenshot:\neach <basename>.css (optionally with a same-basename .png/.jpg/.jpeg\nscreenshot alongside it) becomes its own output bundle")
+	allowDuplicates := flag.Bool("allow-duplicates", false, "in --batch mode, generate every screen even when its .css is\nbyte-identical to an earlier one, or its screenshot is a near-duplicate\n(default: skip duplicates and warn)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "figswiftui — generate a SwiftUI screen + Assets.xcassets from a Figma CSS\nexport and/or a screenshot. Fully offline: no AI, no network calls.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n  figswiftui --css <file> [--screenshot <file>] --name <bundle-name> [flags]\n  figswiftui --screenshot <file> --name <bundle-name> [flags]\n  figswiftui --batch <dir> [--name <prefix>] [flags]\n\nFlags:\n")
 		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nNote: --css must be plain-text (a real Figma \"copy as CSS\" paste). Screenshot-only\ninput (no --css) produces a lower-fidelity color/dimension skeleton with placeholder\ntext — full structure and text extraction needs a companion CSS export (no OCR is\nperformed).\n")
+		fmt.Fprintf(os.Stderr, "\nNote: --css must be plain-text (a real Figma \"copy as CSS\" paste). Screenshot-only\ninput (no --css) produces a lower-fidelity color/dimension skeleton with placeholder\ntext — full structure and text extraction needs a companion CSS export (no OCR is\nperformed).\n\nIn --batch mode, a .css byte-identical to one already processed, or a screenshot\nthat's a near-duplicate of one already processed, is skipped with a warning —\npass --allow-duplicates to generate it anyway.\n")
 	}
 	flag.Parse()
 
@@ -37,7 +38,7 @@ func main() {
 		if *screenName != "" {
 			fmt.Fprintln(os.Stderr, "warning: --screen-name is ignored in --batch mode (derived per screen)")
 		}
-		if err := runBatch(*batchDir, *name, *out, *matchProject); err != nil {
+		if err := runBatch(*batchDir, *name, *out, *matchProject, *allowDuplicates); err != nil {
 			fatalf("%v", err)
 		}
 		return
@@ -62,33 +63,36 @@ func main() {
 
 var screenshotExts = []string{".png", ".jpg", ".jpeg"}
 
+// batchCandidate is one <basename>.css (+ optional screenshot) pair
+// discovered by runBatch, before duplicate detection runs.
+type batchCandidate struct {
+	cssFile        string
+	cssPath        string
+	screenshotPath string
+	bundleName     string
+}
+
 // runBatch scans dir (top-level only) for *.css files and, for each one,
 // generates a screen bundle named "<namePrefix>-<basename>" (or just
 // "<basename>" when namePrefix is empty), pairing it with a same-basename
 // screenshot if one exists alongside it. One failing screen is reported and
-// skipped rather than aborting the whole batch.
-func runBatch(dir, namePrefix, out, matchProject string) error {
+// skipped rather than aborting the whole batch. Duplicate inputs — a .css
+// byte-identical to one already seen, or a screenshot that's a
+// near-duplicate of one already seen — are detected and skipped (with a
+// warning) unless allowDuplicates is set.
+func runBatch(dir, namePrefix, out, matchProject string, allowDuplicates bool) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("reading --batch directory: %w", err)
 	}
 
-	var cssFiles []string
+	var candidates []batchCandidate
 	for _, e := range entries {
 		if e.IsDir() || strings.ToLower(filepath.Ext(e.Name())) != ".css" {
 			continue
 		}
-		cssFiles = append(cssFiles, e.Name())
-	}
-	sort.Strings(cssFiles)
-	if len(cssFiles) == 0 {
-		return fmt.Errorf("no .css files found in %s", dir)
-	}
-
-	okCount, failCount := 0, 0
-	for _, cssFile := range cssFiles {
-		base := strings.TrimSuffix(cssFile, filepath.Ext(cssFile))
-		cssPath := filepath.Join(dir, cssFile)
+		base := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
+		cssPath := filepath.Join(dir, e.Name())
 
 		screenshotPath := ""
 		for _, ext := range screenshotExts {
@@ -103,26 +107,91 @@ func runBatch(dir, namePrefix, out, matchProject string) error {
 		if namePrefix != "" {
 			bundleName = namePrefix + "-" + base
 		}
+		candidates = append(candidates, batchCandidate{e.Name(), cssPath, screenshotPath, bundleName})
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].cssFile < candidates[j].cssFile })
+	if len(candidates) == 0 {
+		return fmt.Errorf("no .css files found in %s", dir)
+	}
 
-		swiftPath, assetsPath, err := generateScreen(cssPath, screenshotPath, bundleName, "", out, matchProject)
+	okCount, failCount, skipCount := 0, 0, 0
+	seenCSSHash := map[string]string{} // sha256 -> first filename
+	var seenScreenshots []screenshotHashEntry
+
+	for _, c := range candidates {
+		if !allowDuplicates {
+			if dupOf, isDup, err := detectDuplicate(c, seenCSSHash, seenScreenshots); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %s: could not check for duplicates: %v\n", c.cssFile, err)
+			} else if isDup {
+				fmt.Printf("%s -> skipped (duplicate of %s; pass --allow-duplicates to generate anyway)\n", c.cssFile, dupOf)
+				skipCount++
+				continue
+			}
+		}
+		if sha, err := fileSHA256(c.cssPath); err == nil {
+			if _, exists := seenCSSHash[sha]; !exists {
+				seenCSSHash[sha] = c.cssFile
+			}
+		}
+		if c.screenshotPath != "" {
+			if img, err := loadImageForHash(c.screenshotPath); err == nil {
+				seenScreenshots = append(seenScreenshots, screenshotHashEntry{c.cssFile, imageDHash(img)})
+			}
+		}
+
+		swiftPath, assetsPath, err := generateScreen(c.cssPath, c.screenshotPath, c.bundleName, "", out, matchProject)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %s: %v\n", cssFile, err)
+			fmt.Fprintf(os.Stderr, "error: %s: %v\n", c.cssFile, err)
 			failCount++
 			continue
 		}
 		suffix := ""
-		if screenshotPath != "" {
-			suffix = " (+ " + filepath.Base(screenshotPath) + ")"
+		if c.screenshotPath != "" {
+			suffix = " (+ " + filepath.Base(c.screenshotPath) + ")"
 		}
-		fmt.Printf("%s%s -> %s, %s\n", cssFile, suffix, swiftPath, assetsPath)
+		fmt.Printf("%s%s -> %s, %s\n", c.cssFile, suffix, swiftPath, assetsPath)
 		okCount++
 	}
 
-	fmt.Printf("\n%d screen(s) generated, %d failed\n", okCount, failCount)
+	fmt.Printf("\n%d screen(s) generated, %d skipped as duplicates, %d failed\n", okCount, skipCount, failCount)
 	if failCount > 0 {
-		return fmt.Errorf("%d of %d screens failed", failCount, len(cssFiles))
+		return fmt.Errorf("%d of %d screens failed", failCount, len(candidates))
 	}
 	return nil
+}
+
+// screenshotHashEntry records a previously-seen batch candidate's screenshot
+// perceptual hash, keyed by its .css filename, for near-duplicate detection.
+type screenshotHashEntry struct {
+	name string
+	hash uint64
+}
+
+// detectDuplicate reports whether c's .css is byte-identical to an earlier
+// candidate's, or its screenshot is a near-duplicate (small dHash Hamming
+// distance) of an earlier candidate's, and if so which one.
+func detectDuplicate(c batchCandidate, seenCSSHash map[string]string, seenScreenshots []screenshotHashEntry) (dupOf string, isDup bool, err error) {
+	sha, err := fileSHA256(c.cssPath)
+	if err != nil {
+		return "", false, err
+	}
+	if prior, ok := seenCSSHash[sha]; ok {
+		return prior + " (identical .css)", true, nil
+	}
+	if c.screenshotPath == "" {
+		return "", false, nil
+	}
+	img, err := loadImageForHash(c.screenshotPath)
+	if err != nil {
+		return "", false, err
+	}
+	h := imageDHash(img)
+	for _, prior := range seenScreenshots {
+		if hammingDistance(h, prior.hash) <= dHashThreshold {
+			return prior.name + " (near-identical screenshot)", true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // generateScreen runs the full pipeline for one screen: parse/build the

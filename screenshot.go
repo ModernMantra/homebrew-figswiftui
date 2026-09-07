@@ -19,6 +19,21 @@ type ScreenshotInfo struct {
 	DominantColors []string // hex, most frequent first
 }
 
+// loadImageForHash decodes an image file for perceptual hashing only — a
+// lighter-weight path than LoadScreenshot for --batch's duplicate check,
+// which doesn't need dominant colors or crop handling.
+func loadImageForHash(path string) (image.Image, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("decode image: %w", err)
+	}
+	return img, nil
+}
+
 func LoadScreenshot(path string) (*ScreenshotInfo, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
