@@ -309,16 +309,23 @@ func generateScreen(cssPath, screenshotPath, bundleName, screenNameOverride, out
 		root = skeletonFromScreenshot(screenshot)
 	} else if screenshot != nil {
 		// Both a CSS export and a screenshot were given: CSS still drives
-		// structure/colors, but OCR on the screenshot can recover real
-		// button labels that Figma's export only names generically (the
-		// component, e.g. "Skip"/"Next" — not necessarily the true
-		// rendered/localized string).
+		// structure/colors, but OCR on the screenshot recovers real text —
+		// componentized button labels Figma's export only names generically
+		// (e.g. "Skip"/"Next"), and template placeholder copy that may be
+		// stale relative to the real, localized instance shown on screen.
 		if ocrLines, ocrErr := recognizeTextFromBytes(screenshot.CroppedPNG); ocrErr == nil {
-			applyOCRButtonLabels(root, ocrLines)
+			applyOCRText(root, ocrLines)
 		} else {
-			fmt.Fprintf(os.Stderr, "warning: OCR unavailable for button-label verification (%v)\n", ocrErr)
+			fmt.Fprintf(os.Stderr, "warning: OCR unavailable for text verification (%v)\n", ocrErr)
 		}
 	}
+
+	// Small icon-like shapes get real icon treatment: an SF Symbol when the
+	// Figma layer name matches a recognizable keyword (no screenshot
+	// needed), or — failing that, when a screenshot is available — a
+	// direct ImageMagick crop of the real rendered pixels at that shape's
+	// position, closer to pixel-perfect than a mechanical reconstruction.
+	applySystemImages(root, screenshotPath)
 
 	resolvedScreenName := screenNameOverride
 	if resolvedScreenName == "" {
@@ -343,6 +350,8 @@ func generateScreen(cssPath, screenshotPath, bundleName, screenNameOverride, out
 		imgName := sanitizeIdentifier(illustration.Block.Name, true) + "Illustration"
 		illustrations[imgName] = RenderIllustrationSVG(illustration)
 	}
+	pngIcons := map[string][]byte{}
+	collectCroppedIcons(root, pngIcons)
 
 	swiftSrc := GenerateSwift(root, resolvedScreenName, colors)
 
@@ -362,7 +371,7 @@ func generateScreen(cssPath, screenshotPath, bundleName, screenNameOverride, out
 	}
 	screenshotAssetName := resolvedScreenName + "Reference"
 
-	if assetErr := WriteAssetsCatalog(bundleRoot, colors, illustrations, screenshotPNG, screenshotAssetName); assetErr != nil {
+	if assetErr := WriteAssetsCatalog(bundleRoot, colors, illustrations, pngIcons, screenshotPNG, screenshotAssetName); assetErr != nil {
 		return "", "", fmt.Errorf("writing Assets.xcassets: %w", assetErr)
 	}
 	assetsPath = filepath.Join(bundleRoot, "Assets.xcassets")
@@ -373,6 +382,15 @@ func generateScreen(cssPath, screenshotPath, bundleName, screenNameOverride, out
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "error: "+format+"\n", args...)
 	os.Exit(1)
+}
+
+func collectCroppedIcons(n *Node, out map[string][]byte) {
+	if n.Kind == KindSystemImage && len(n.CroppedImageData) > 0 && n.CroppedAssetName != "" {
+		out[n.CroppedAssetName] = n.CroppedImageData
+	}
+	for _, c := range n.Children {
+		collectCroppedIcons(c, out)
+	}
 }
 
 func findIllustrationGroup(n *Node) *Node {

@@ -54,14 +54,26 @@ Run `figswiftui --help` for the full flag reference.
   figswiftui detects that and falls back automatically.
 
 **Giving both together** does more than attach a reference image: CSS still
-drives all the structure and colors, but a componentized button (Figma's
-export only names the *component* — "Skip"/"Next" — not necessarily the
-true rendered/localized text) gets its real label filled in from the
-screenshot via OCR, positionally matched in reading order. It's a
-best-effort correlation, not a guaranteed-correct one, so the label still
-gets a `// TODO` comment — just reading "auto-filled from the screenshot
-via OCR, verify it's correct" instead of the generic "confirm this label
-matches the rendered/localized text".
+drives all the structure and colors, but every piece of text — not just
+buttons — is matched against the screenshot's OCR output in reading order
+and preferred when a plausible match is found, since OCR reflects what's
+actually rendered (a componentized button's Figma layer only names the
+*component*, e.g. "Skip"/"Next", and a template's placeholder copy can be
+stale relative to a real, localized instance). It's a best-effort
+correlation, not a guaranteed-correct one — there's no real layout-position
+resolver behind it, just reading order — so a button's filled-in label
+still gets a `// TODO` comment naming it as OCR-derived.
+
+**Small icon-like shapes** (<=60px) get real icon treatment instead of a
+flat color rect: an SF Symbol when the Figma layer name matches a
+recognizable keyword ("search_icon" → `magnifyingglass`, works without a
+screenshot), or — when no keyword matches but a screenshot is available —
+a direct crop of the real pixels at that shape's position (via
+`brew install imagemagick`; installed by default alongside figswiftui,
+skip it with `--without-imagemagick`), which is the "use a real icon
+instead of guessing" fallback in its literal sense: actual rendered pixels,
+not a reconstruction. Without imagemagick, or when the shape's position
+can't be resolved, it stays a plain colored shape.
 
 ## Batch mode
 
@@ -84,9 +96,15 @@ they duplicate. Pass `--allow-duplicates` to generate every screen anyway.
   spacing, or exact layout from pixels alone (that's what multimodal AI
   does, deliberately out of scope here) — OCR closes the text gap, not the
   structure gap.
-- Componentized button labels (e.g. a "Skip"/"Next" component whose Figma
-  layer name may not match its true localized/rendered text) get a
-  `// TODO` comment flagging them for manual verification.
+- OCR-filled text (buttons and general text alike) is a best-effort reading-
+  order correlation, not a guaranteed-correct match — always flagged with a
+  `// TODO` comment for manual verification.
+- The icon fallback (SF Symbol or a cropped screenshot region) only applies
+  to small (<=60px), individually-classified shapes — a decorative
+  illustration subtree is still mechanically translated to SVG as a whole,
+  and the crop fallback specifically only works for a shape that's itself
+  `position: absolute` with a resolvable box; there's no general
+  layout-position resolver behind either path.
 - The layout-tree reconstruction is tuned to Figma's standard auto-layout
   "copy as CSS" export convention, not arbitrary hand-authored CSS.
 

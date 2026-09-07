@@ -10,7 +10,7 @@ import (
 // WriteAssetsCatalog writes an Assets.xcassets folder matching the exact
 // Contents.json shapes Xcode itself produces (schemas taken verbatim from
 // the hand-built reference examples in output/, not guessed).
-func WriteAssetsCatalog(root string, colors []ColorDef, illustrations map[string]string, screenshotPNG []byte, screenshotAssetName string) error {
+func WriteAssetsCatalog(root string, colors []ColorDef, illustrations map[string]string, pngIcons map[string][]byte, screenshotPNG []byte, screenshotAssetName string) error {
 	catalog := filepath.Join(root, "Assets.xcassets")
 	if err := os.MkdirAll(catalog, 0o755); err != nil {
 		return err
@@ -28,6 +28,11 @@ func WriteAssetsCatalog(root string, colors []ColorDef, illustrations map[string
 	}
 	for name, svg := range illustrations {
 		if err := writeVectorImageSet(catalog, name, svg); err != nil {
+			return err
+		}
+	}
+	for name, png := range pngIcons {
+		if err := writePNGImageSet(catalog, name, png); err != nil {
 			return err
 		}
 	}

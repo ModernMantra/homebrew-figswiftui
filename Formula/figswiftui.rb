@@ -7,6 +7,7 @@ class Figswiftui < Formula
 
   depends_on "go" => :build
   depends_on "tesseract" => :recommended
+  depends_on "imagemagick" => :recommended
 
   def install
     system "go", "build", "-o", bin/"figswiftui", "."
@@ -14,11 +15,15 @@ class Figswiftui < Formula
 
   def caveats
     <<~EOS
-      tesseract is used only for --screenshot input with no companion --css:
-      it recognizes real text instead of a "TODO" placeholder. Everything
-      else (the primary --css-driven path, --batch, --match-project) works
-      the same with or without it — figswiftui detects its absence and
-      falls back automatically.
+      tesseract is used for --screenshot input: it recognizes real text
+      instead of a "TODO" placeholder (screenshot-only), or fills in real
+      button labels and refines heading/body copy (CSS + screenshot
+      together). imagemagick is used only when a small icon-like shape has
+      no good SF Symbol match: it crops the real pixels for that shape
+      directly out of the screenshot instead of a mechanical reconstruction.
+      Everything else (the primary --css-driven path, --batch,
+      --match-project) works the same with or without either — figswiftui
+      detects their absence and falls back automatically.
     EOS
   end
 

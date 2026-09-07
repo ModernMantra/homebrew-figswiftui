@@ -16,6 +16,7 @@ const (
 	KindButton
 	KindDotIndicatorGroup
 	KindIllustrationGroup
+	KindSystemImage
 )
 
 type Node struct {
@@ -40,6 +41,14 @@ type Node struct {
 	// onNext to onWeiter just because the rendered/localized text differs.
 	DisplayTextOverride string
 	OCRVerified         bool
+
+	// Populated only for KindSystemImage: the matched SF Symbol name, or
+	// (when CroppedImageData is set instead) empty — no keyword match was
+	// found, so a real cropped-screenshot region is used as a pixel-exact
+	// fallback instead of a symbol or a mechanically reconstructed shape.
+	SystemImageName  string
+	CroppedImageData []byte
+	CroppedAssetName string
 }
 
 type stackFrame struct {

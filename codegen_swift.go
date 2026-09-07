@@ -128,6 +128,15 @@ func (g *swiftGen) writeNode(b *strings.Builder, n *Node, depth int) {
 
 	case KindText:
 		txt := textOf(n)
+		// Only worth flagging when OCR filled a genuine gap — the CSS
+		// layer name itself was generic (a component's own placeholder,
+		// not real content) and had no usable text at all. Refining
+		// already-decent CSS text (a heading/body copy that just happens
+		// to differ slightly from the real rendered string) doesn't need
+		// a comment on every single line; that gap-filling case does.
+		if n.OCRVerified && genericLayerNameRe.MatchString(strings.TrimSpace(n.Block.Name)) {
+			fmt.Fprintf(b, "%s// TODO(figswiftui): text auto-filled from the screenshot via OCR — verify it's correct\n", ind)
+		}
 		fmt.Fprintf(b, "%sText(%s)\n", ind, swiftStringLiteral(txt))
 		if fs, ok := parsePx(n.Block.Props["font-size"]); ok {
 			fmt.Fprintf(b, "%s    .font(%s)\n", ind, swiftFont(fs, n.Block.Props["font-weight"]))
@@ -187,6 +196,32 @@ func (g *swiftGen) writeNode(b *strings.Builder, n *Node, depth int) {
 		fmt.Fprintf(b, "%sImage(\"%s\")\n", ind, imgName)
 		fmt.Fprintf(b, "%s    .resizable()\n", ind)
 		fmt.Fprintf(b, "%s    .aspectRatio(contentMode: .fit)\n", ind)
+
+	case KindSystemImage:
+		w, hasW := parsePx(n.Block.Props["width"])
+		h, hasH := parsePx(n.Block.Props["height"])
+		switch {
+		case n.SystemImageName != "":
+			size := 20.0
+			if hasW && hasH {
+				size = w
+				if h < size {
+					size = h
+				}
+			}
+			fmt.Fprintf(b, "%sImage(systemName: \"%s\")\n", ind, n.SystemImageName)
+			fmt.Fprintf(b, "%s    .font(.system(size: %s))\n", ind, trimNum(size))
+			if col := g.colorName(n.Block.Props["background"]); col != "" {
+				fmt.Fprintf(b, "%s    .foregroundStyle(Color(\"%s\"))\n", ind, col)
+			}
+		case n.CroppedAssetName != "":
+			fmt.Fprintf(b, "%sImage(\"%s\")\n", ind, n.CroppedAssetName)
+			fmt.Fprintf(b, "%s    .resizable()\n", ind)
+			fmt.Fprintf(b, "%s    .aspectRatio(contentMode: .fit)\n", ind)
+			if hasW && hasH {
+				fmt.Fprintf(b, "%s    .frame(width: %s, height: %s)\n", ind, trimNum(w), trimNum(h))
+			}
+		}
 
 	case KindShape:
 		if op, ok := parseOpacity(n.Block.Props["opacity"]); ok && op == 0 {

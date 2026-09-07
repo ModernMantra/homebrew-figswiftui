@@ -17,51 +17,59 @@ type OCRLine struct {
 	X, Y, W, H int
 }
 
-// applyOCRButtonLabels finds each KindButton node in the tree (document
-// order) and, when a companion screenshot's OCR found real text, fills in
-// its true rendered label as a DisplayTextOverride — Figma's CSS export
-// names the button *component* (e.g. "Skip"/"Next"), not necessarily the
-// true localized/rendered string. Matching is positional, not exact: OCR
-// lines are bucketed into coarse rows and sorted top-to-bottom then
-// left-to-right, then assigned to buttons in that same order. This is a
-// best-effort correlation — there's no real layout-position resolver here,
-// just a reading-order heuristic — which is why the button's TODO comment
-// still asks for manual verification, just worded differently once a real
-// candidate has been filled in (see codegen_swift.go's KindButton case).
-func applyOCRButtonLabels(root *Node, ocrLines []OCRLine) {
-	var buttons []*Node
+// applyOCRText matches OCR-recognized text to every text-bearing node in
+// the CSS-derived tree (buttons and general text), in document order,
+// against OCR paragraphs in reading order. OCR reflects what's actually
+// rendered on screen — which a Figma CSS export often can't give reliably:
+// a componentized button only exposes its component name ("Skip"/"Next"),
+// and a template's placeholder copy ("Welcome to your Modular App!") can be
+// stale relative to a real, localized instance. So OCR is preferred
+// whenever a plausible match is found, not just used to patch obvious
+// gaps.
+//
+// There's no real layout-position resolver behind this — CSS flow-layout
+// nodes don't carry absolute coordinates to match against OCR pixel
+// positions — so this is order correlation, not geometry. Buttons are
+// matched first, restricted to short (<=2 word) candidates — a heading
+// that happens to be short shouldn't be mistaken for a button label, and
+// word count alone reliably separates the two in practice (a height cutoff
+// was tried too, but a handful of OCR lines is too small a sample for
+// "median line height" to mean much, and it excluded genuine short button
+// text more often than it excluded anything wrongly matched); general text
+// nodes then take whatever candidates remain, in order. Every match is
+// marked OCRVerified so the generated comment stays honest about it being
+// a best-effort correlation, not a guarantee.
+func applyOCRText(root *Node, ocrLines []OCRLine) {
+	var nodes []*Node
 	var collect func(n *Node)
 	collect = func(n *Node) {
-		if n.Kind == KindButton {
-			buttons = append(buttons, n)
+		// Status-bar chrome is never rendered at all (see codegen's own
+		// KindStatusBarChrome handling) — a node nested under it, like a
+		// status-bar clock's own text, must not compete for a text-node's
+		// OCR slot. A button's own children (e.g. a componentized
+		// "Placeholder" label) are also skipped here: the button itself
+		// already gets matched in pass 1, and writeNode never renders a
+		// button's children as independent Text elements, so matching one
+		// would just waste a candidate a real text node could have used.
+		if n.Kind == KindStatusBarChrome || n.Kind == KindButton {
+			if n.Kind == KindButton {
+				nodes = append(nodes, n)
+			}
+			return
+		}
+		if n.Kind == KindText {
+			nodes = append(nodes, n)
 		}
 		for _, c := range n.Children {
 			collect(c)
 		}
 	}
 	collect(root)
-	if len(buttons) == 0 {
+	if len(nodes) == 0 {
 		return
 	}
 
-	// Button labels are almost always 1-2 words ("Skip", "Weiter", "Get
-	// Started") — a 3+ word line is far more likely to be a heading that
-	// happens to be short than an actual button. Headings also tend to be
-	// rendered larger than a button label even when short, so a line
-	// notably taller than this screenshot's own median line height is
-	// excluded too, catching the cases word count alone wouldn't.
-	medianH := medianLineHeight(ocrLines)
-	var candidates []OCRLine
-	for _, l := range ocrLines {
-		wc := len(strings.Fields(l.Text))
-		if wc < 1 || wc > 2 {
-			continue
-		}
-		if medianH > 0 && float64(l.H) > medianH*1.3 {
-			continue
-		}
-		candidates = append(candidates, l)
-	}
+	candidates := append([]OCRLine(nil), ocrLines...)
 	sort.Slice(candidates, func(i, j int) bool {
 		const rowHeight = 20 // px; groups same-row text despite small OCR Y jitter
 		ri, rj := candidates[i].Y/rowHeight, candidates[j].Y/rowHeight
@@ -70,13 +78,48 @@ func applyOCRButtonLabels(root *Node, ocrLines []OCRLine) {
 		}
 		return candidates[i].X < candidates[j].X
 	})
+	used := make([]bool, len(candidates))
 
-	for i, b := range buttons {
-		if i >= len(candidates) {
+	// Pass 1: buttons get the pickiest match — short, non-oversized text
+	// only — since a paragraph or heading should never end up as a
+	// button's label just because it was next in reading order.
+	for _, n := range nodes {
+		if n.Kind != KindButton {
+			continue
+		}
+		for i, c := range candidates {
+			if used[i] {
+				continue
+			}
+			wc := len(strings.Fields(c.Text))
+			if wc < 1 || wc > 2 {
+				continue
+			}
+			n.DisplayTextOverride = c.Text
+			n.OCRVerified = true
+			used[i] = true
 			break
 		}
-		b.DisplayTextOverride = candidates[i].Text
-		b.OCRVerified = true
+	}
+
+	// Pass 2: general text nodes, in document order, take the next
+	// unclaimed candidate in reading order — whatever length it is, since
+	// headings and body paragraphs vary too widely to filter by size.
+	ci := 0
+	for _, n := range nodes {
+		if n.Kind != KindText {
+			continue
+		}
+		for ci < len(candidates) && used[ci] {
+			ci++
+		}
+		if ci >= len(candidates) {
+			break
+		}
+		n.DisplayTextOverride = candidates[ci].Text
+		n.OCRVerified = true
+		used[ci] = true
+		ci++
 	}
 }
 
@@ -98,8 +141,14 @@ func recognizeText(imagePath string) ([]OCRLine, error) {
 	if !tesseractAvailable() {
 		return nil, fmt.Errorf("tesseract not found on PATH — install it with `brew install tesseract` for real text extraction from screenshot-only input")
 	}
-	out, err := exec.Command("tesseract", imagePath, "stdout", "--psm", "11", "tsv").Output()
+	cmd := exec.Command("tesseract", imagePath, "stdout", "--psm", "11", "tsv")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("running tesseract: %s", msg)
+		}
 		return nil, fmt.Errorf("running tesseract: %w", err)
 	}
 	return parseTesseractTSV(string(out)), nil
@@ -136,11 +185,16 @@ func recognizeTextFromBytes(pngData []byte) ([]OCRLine, error) {
 const minLineConfidence = 60
 
 // parseTesseractTSV groups tesseract's word-level TSV rows (level 5) into
-// per-line entries, keyed by (block, paragraph, line), with each line's
-// bounding box being the union of its words' boxes and its confidence the
+// per-*paragraph* entries, keyed by (block, paragraph) — merging multiple
+// wrapped visual lines of the same paragraph into one text blob, so a
+// multi-line CSS text node (body copy that wraps across 2-3 lines) can
+// match one OCR entry instead of several fragments. A short, visually
+// isolated label (a button, a single-line heading) is virtually always its
+// own paragraph already, so this doesn't fragment those. Each entry's
+// bounding box is the union of its words' boxes and its confidence the
 // average of its words' confidences.
 func parseTesseractTSV(tsv string) []OCRLine {
-	type key struct{ block, par, line int }
+	type key struct{ block, par int }
 	type acc struct {
 		words                  []string
 		confSum                float64
@@ -174,13 +228,12 @@ func parseTesseractTSV(tsv string) []OCRLine {
 		}
 		blockNum, _ := strconv.Atoi(fields[2])
 		parNum, _ := strconv.Atoi(fields[3])
-		lineNum, _ := strconv.Atoi(fields[4])
 		left, _ := strconv.Atoi(fields[6])
 		top, _ := strconv.Atoi(fields[7])
 		width, _ := strconv.Atoi(fields[8])
 		height, _ := strconv.Atoi(fields[9])
 
-		k := key{blockNum, parNum, lineNum}
+		k := key{blockNum, parNum}
 		a, ok := lines[k]
 		if !ok {
 			a = &acc{}
