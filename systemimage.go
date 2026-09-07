@@ -19,51 +19,59 @@ const maxSystemImageSize = 60.0
 // renders as a real system symbol — scales cleanly, matches the OS's own
 // icon style, needs no exported asset at all — instead of a mechanically
 // reconstructed shape approximation.
+// Every keyword is \b-bounded — deliberately, even ones that look safe to
+// leave loose. A real screen surfaced why: "profile" (no boundary) matched
+// inside "profilemenu_onboarding", "profilemenu_faq", and
+// "profilemenu_topbar_back" — a namespace prefix shared by nearly every
+// layer on a "Profilemenu" screen, none of them an actual profile/avatar
+// icon. Professional design systems name layers with exactly this kind of
+// compound/namespaced convention, so an unbounded keyword is a real,
+// recurring false-positive risk, not just a theoretical one.
 var systemImageKeywords = []struct {
 	pattern *regexp.Regexp
 	symbol  string
 }{
-	{regexp.MustCompile(`(?i)chevron.*left|arrow.*left|\bback\b`), "chevron.left"},
-	{regexp.MustCompile(`(?i)chevron.*right|arrow.*right|\bforward\b`), "chevron.right"},
+	{regexp.MustCompile(`(?i)\bchevron\b.*\bleft\b|\barrow\b.*\bleft\b|\bback\b`), "chevron.left"},
+	{regexp.MustCompile(`(?i)\bchevron\b.*\bright\b|\barrow\b.*\bright\b|\bforward\b`), "chevron.right"},
 	{regexp.MustCompile(`(?i)\bsearch\b`), "magnifyingglass"},
-	{regexp.MustCompile(`(?i)profile|avatar|\bperson\b|account`), "person.crop.circle"},
-	{regexp.MustCompile(`(?i)bookmark|\bsave\b`), "bookmark"},
-	{regexp.MustCompile(`(?i)headphone|\baudio\b|\blisten\b`), "headphones"},
+	{regexp.MustCompile(`(?i)\bprofile\b|\bavatar\b|\bperson\b|\baccount\b`), "person.crop.circle"},
+	{regexp.MustCompile(`(?i)\bbookmark\b|\bsave\b`), "bookmark"},
+	{regexp.MustCompile(`(?i)\bheadphone\b|\baudio\b|\blisten\b`), "headphones"},
 	{regexp.MustCompile(`(?i)\bplay\b`), "play.fill"},
 	{regexp.MustCompile(`(?i)\bpause\b`), "pause.fill"},
-	{regexp.MustCompile(`(?i)\bclose\b|dismiss|xmark`), "xmark"},
-	{regexp.MustCompile(`(?i)\bmenu\b|hamburger`), "line.3.horizontal"},
-	{regexp.MustCompile(`(?i)settings|\bgear\b|\bcog\b`), "gearshape"},
-	{regexp.MustCompile(`(?i)\bstar\b|favorite|rating`), "star"},
+	{regexp.MustCompile(`(?i)\bclose\b|\bdismiss\b|\bxmark\b`), "xmark"},
+	{regexp.MustCompile(`(?i)\bmenu\b|\bhamburger\b`), "line.3.horizontal"},
+	{regexp.MustCompile(`(?i)\bsettings\b|\bgear\b|\bcog\b`), "gearshape"},
+	{regexp.MustCompile(`(?i)\bstar\b|\bfavorite\b|\brating\b`), "star"},
 	{regexp.MustCompile(`(?i)\bheart\b|\blike\b`), "heart"},
-	{regexp.MustCompile(`(?i)checkmark|\bcheck\b|\bdone\b|success`), "checkmark"},
-	{regexp.MustCompile(`(?i)calendar|\bdate\b`), "calendar"},
+	{regexp.MustCompile(`(?i)\bcheckmark\b|\bcheck\b|\bdone\b|\bsuccess\b`), "checkmark"},
+	{regexp.MustCompile(`(?i)\bcalendar\b|\bdate\b`), "calendar"},
 	{regexp.MustCompile(`(?i)\bshare\b`), "square.and.arrow.up"},
-	{regexp.MustCompile(`(?i)\bmore\b|ellipsis|\bdots\b`), "ellipsis"},
+	{regexp.MustCompile(`(?i)\bmore\b|\bellipsis\b|\bdots\b`), "ellipsis"},
 	{regexp.MustCompile(`(?i)\bgrid\b`), "square.grid.2x2"},
 	{regexp.MustCompile(`(?i)\bhome\b`), "house"},
-	{regexp.MustCompile(`(?i)trash|delete|remove`), "trash"},
-	{regexp.MustCompile(`(?i)download`), "arrow.down.circle"},
-	{regexp.MustCompile(`(?i)upload`), "arrow.up.circle"},
-	{regexp.MustCompile(`(?i)notification|\bbell\b|\balert\b`), "bell"},
-	{regexp.MustCompile(`(?i)\block\b|secure|password`), "lock"},
-	{regexp.MustCompile(`(?i)\bmail\b|email|envelope`), "envelope"},
+	{regexp.MustCompile(`(?i)\btrash\b|\bdelete\b|\bremove\b`), "trash"},
+	{regexp.MustCompile(`(?i)\bdownload\b`), "arrow.down.circle"},
+	{regexp.MustCompile(`(?i)\bupload\b`), "arrow.up.circle"},
+	{regexp.MustCompile(`(?i)\bnotification\b|\bbell\b|\balert\b`), "bell"},
+	{regexp.MustCompile(`(?i)\block\b|\bsecure\b|\bpassword\b`), "lock"},
+	{regexp.MustCompile(`(?i)\bmail\b|\bemail\b|\benvelope\b`), "envelope"},
 	{regexp.MustCompile(`(?i)\bphone\b|\bcall\b`), "phone"},
-	{regexp.MustCompile(`(?i)camera|\bphoto\b`), "camera"},
-	{regexp.MustCompile(`(?i)\bvideo\b|film|movie`), "video"},
-	{regexp.MustCompile(`(?i)location|\bpin\b|\bmap\b`), "mappin.and.ellipse"},
-	{regexp.MustCompile(`(?i)\bcart\b|basket|\bshop\b`), "cart"},
+	{regexp.MustCompile(`(?i)\bcamera\b|\bphoto\b`), "camera"},
+	{regexp.MustCompile(`(?i)\bvideo\b|\bfilm\b|\bmovie\b`), "video"},
+	{regexp.MustCompile(`(?i)\blocation\b|\bpin\b|\bmap\b`), "mappin.and.ellipse"},
+	{regexp.MustCompile(`(?i)\bcart\b|\bbasket\b|\bshop\b`), "cart"},
 	{regexp.MustCompile(`(?i)\bfilter\b`), "line.3.horizontal.decrease.circle"},
-	{regexp.MustCompile(`(?i)refresh|reload|\bsync\b`), "arrow.clockwise"},
+	{regexp.MustCompile(`(?i)\brefresh\b|\breload\b|\bsync\b`), "arrow.clockwise"},
 	{regexp.MustCompile(`(?i)\binfo\b`), "info.circle"},
-	{regexp.MustCompile(`(?i)warning|caution`), "exclamationmark.triangle"},
+	{regexp.MustCompile(`(?i)\bwarning\b|\bcaution\b`), "exclamationmark.triangle"},
 	{regexp.MustCompile(`(?i)\bplus\b|\badd\b`), "plus"},
-	{regexp.MustCompile(`(?i)\bminus\b|subtract`), "minus"},
-	{regexp.MustCompile(`(?i)\bedit\b|pencil`), "pencil"},
+	{regexp.MustCompile(`(?i)\bminus\b|\bsubtract\b`), "minus"},
+	{regexp.MustCompile(`(?i)\bedit\b|\bpencil\b`), "pencil"},
 	{regexp.MustCompile(`(?i)\beye\b`), "eye"},
 	{regexp.MustCompile(`(?i)\blink\b`), "link"},
 	{regexp.MustCompile(`(?i)\bfolder\b`), "folder"},
-	{regexp.MustCompile(`(?i)document|\bfile\b`), "doc"},
+	{regexp.MustCompile(`(?i)\bdocument\b|\bfile\b`), "doc"},
 }
 
 var wordSeparatorRe = regexp.MustCompile(`[_\-./]`)
@@ -98,6 +106,13 @@ func matchSystemImage(name string) (string, bool) {
 func applySystemImages(root *Node, screenshotPath string) {
 	var walk func(n *Node)
 	walk = func(n *Node) {
+		// Status-bar chrome is never rendered at all (see codegen's own
+		// KindStatusBarChrome handling) — classifying and cropping an icon
+		// inside it (a battery/wifi/signal glyph) would just waste an
+		// ImageMagick call and leave an unreferenced asset in the catalog.
+		if n.Kind == KindStatusBarChrome {
+			return
+		}
 		if n.Kind == KindShape {
 			tryApplySystemImage(n, root, screenshotPath)
 		}
