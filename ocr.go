@@ -61,13 +61,26 @@ func recognizeTextFromBytes(pngData []byte) ([]OCRLine, error) {
 	return recognizeText(tmp.Name())
 }
 
+// minLineConfidence is the minimum *average* per-line OCR confidence
+// (0-100, tesseract's own uncertainty score) to keep a line at all. A UI
+// screenshot's real, cleanly-rendered text reliably scores in the 80s-90s;
+// a busy screenshot's photos and icons still tempt tesseract into "reading"
+// them as text (PSM 11 searches hard for text everywhere), but those reads
+// score much lower. This is the primary noise filter — leaning on
+// tesseract's own confidence signal is more reliable than guessing at
+// patterns for "text that looks like an icon misread".
+const minLineConfidence = 60
+
 // parseTesseractTSV groups tesseract's word-level TSV rows (level 5) into
 // per-line entries, keyed by (block, paragraph, line), with each line's
-// bounding box being the union of its words' boxes.
+// bounding box being the union of its words' boxes and its confidence the
+// average of its words' confidences.
 func parseTesseractTSV(tsv string) []OCRLine {
 	type key struct{ block, par, line int }
 	type acc struct {
 		words                  []string
+		confSum                float64
+		confCount              int
 		minX, minY, maxX, maxY int
 		started                bool
 	}
@@ -92,7 +105,7 @@ func parseTesseractTSV(tsv string) []OCRLine {
 		}
 		conf, _ := strconv.ParseFloat(fields[10], 64)
 		text := strings.TrimSpace(fields[11])
-		if text == "" || conf < 30 {
+		if text == "" || conf < 0 {
 			continue
 		}
 		blockNum, _ := strconv.Atoi(fields[2])
@@ -111,6 +124,8 @@ func parseTesseractTSV(tsv string) []OCRLine {
 			order = append(order, k)
 		}
 		a.words = append(a.words, text)
+		a.confSum += conf
+		a.confCount++
 		right, bottom := left+width, top+height
 		if !a.started {
 			a.minX, a.minY, a.maxX, a.maxY, a.started = left, top, right, bottom, true
@@ -133,6 +148,9 @@ func parseTesseractTSV(tsv string) []OCRLine {
 	result := make([]OCRLine, 0, len(order))
 	for _, k := range order {
 		a := lines[k]
+		if a.confCount == 0 || a.confSum/float64(a.confCount) < minLineConfidence {
+			continue
+		}
 		result = append(result, OCRLine{
 			Text: strings.Join(a.words, " "),
 			X:    a.minX, Y: a.minY,

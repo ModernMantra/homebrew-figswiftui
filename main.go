@@ -321,15 +321,28 @@ func skeletonFromScreenshot(s *ScreenshotInfo) *Node {
 
 	switch {
 	case len(ocrLines) > 0:
+		// A line's raw OCR pixel height doesn't mean anything on its own —
+		// it depends entirely on the screenshot's resolution/scale, which
+		// is why using it directly as a "font-size" produced nonsense (body
+		// copy reading as a bold title). Scaling each line relative to the
+		// *median* detected line height — a reasonable proxy for "typical
+		// body text" in any screenshot — and mapping that ratio onto a
+		// plausible 16px body baseline gives swiftFont()'s existing
+		// px-threshold bucketing something calibrated to work with.
+		medianH := medianLineHeight(ocrLines)
 		for _, line := range ocrLines {
+			fontSize := 16.0
+			if medianH > 0 {
+				fontSize = float64(line.H) / medianH * 16
+			}
 			weight := "400"
-			if line.H >= 20 {
-				weight = "700" // larger detected text reads as a heading
+			if fontSize >= 22 {
+				weight = "700" // notably larger than typical body text reads as a heading
 			}
 			root.Children = append(root.Children, &Node{
 				Block: &Block{Name: line.Text, Props: map[string]string{
 					"font-family": "System",
-					"font-size":   fmt.Sprintf("%dpx", line.H),
+					"font-size":   fmt.Sprintf("%.0fpx", fontSize),
 					"font-weight": weight,
 				}},
 				Kind: KindText,
@@ -352,6 +365,22 @@ func skeletonFromScreenshot(s *ScreenshotInfo) *Node {
 		root.Block.Props["background"] = s.DominantColors[0]
 	}
 	return root
+}
+
+func medianLineHeight(lines []OCRLine) float64 {
+	if len(lines) == 0 {
+		return 0
+	}
+	heights := make([]int, len(lines))
+	for i, l := range lines {
+		heights[i] = l.H
+	}
+	sort.Ints(heights)
+	mid := len(heights) / 2
+	if len(heights)%2 == 0 {
+		return float64(heights[mid-1]+heights[mid]) / 2
+	}
+	return float64(heights[mid])
 }
 
 // deriveScreenName picks a PascalCase struct/file name from the first
