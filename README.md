@@ -17,41 +17,43 @@ brew install figswiftui
 
 ## Usage
 
-Single screen:
+Just pass the file(s) or a directory as plain arguments, in any order —
+figswiftui tells a `.css` from a screenshot by extension, and a directory
+means batch mode. Nothing else is required: a bundle name is derived from
+the content when you don't give one.
 
 ```bash
-figswiftui --css onboarding.css --screenshot onboarding.png --name Customer-TICKET-123 --out ./output
+figswiftui onboarding.css                       # CSS only
+figswiftui onboarding.css onboarding.png        # CSS + screenshot, either order
+figswiftui onboarding.png                       # screenshot only
+figswiftui ./screens                            # batch: every <basename>.css in the directory
 ```
 
-Batch — a directory of `<basename>.css` files, each optionally paired with a
-same-basename `.png`/`.jpg`/`.jpeg` screenshot:
+Flags are only for the less common cases — an explicit output name, a
+project to match colors against, or an ambiguous path (e.g. a `.txt` file
+that's actually a CSS export):
 
 ```bash
-figswiftui --batch ./screens --name Customer --out ./output
-```
-
-Match colors against an existing Xcode project's asset catalog by exact RGB
-value, reusing its real color names instead of inventing generic ones:
-
-```bash
-figswiftui --css onboarding.css --name Customer-TICKET-123 --match-project /path/to/XcodeProject
+figswiftui onboarding.css --name Customer-TICKET-123 --out ./output
+figswiftui onboarding.css --match-project /path/to/XcodeProject
+figswiftui ./screens --name Customer --allow-duplicates
 ```
 
 Run `figswiftui --help` for the full flag reference.
 
 ## Input
 
-- `--css` — a plain-text Figma "copy as CSS" export (select a frame in Figma,
+- A plain-text Figma "copy as CSS" export (select a frame in Figma,
   right-click → Copy/Paste as → Copy as CSS). Must be plain text, not an
   RTF-wrapped paste.
-- `--screenshot` — a PNG/JPEG of the same screen. Alone (no `--css`), this
-  yields a color/dimension skeleton — real layout/structure still needs a
-  CSS export — but text is recognized via OCR (`brew install tesseract`;
-  installed by default alongside figswiftui, skip it with
-  `--without-tesseract` at install time) instead of a placeholder. Without
-  tesseract on PATH, figswiftui detects that and falls back automatically.
+- A PNG/JPEG screenshot of the same screen. Alone (no CSS), this yields a
+  color/dimension skeleton — real layout/structure still needs a CSS export
+  — but text is recognized via OCR (`brew install tesseract`; installed by
+  default alongside figswiftui, skip it with `--without-tesseract` at
+  install time) instead of a placeholder. Without tesseract on PATH,
+  figswiftui detects that and falls back automatically.
 
-In `--batch` mode, a `.css` byte-identical to one already processed, or a
+In batch mode, a `.css` byte-identical to one already processed, or a
 screenshot that's a near-duplicate of one already processed, is skipped
 with a warning — pass `--allow-duplicates` to generate it anyway.
 

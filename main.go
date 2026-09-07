@@ -12,31 +12,102 @@ import (
 	"strings"
 )
 
+// boolFlagNames lists this program's boolean flags (those that don't
+// consume a following value token, e.g. "-allow-duplicates" not
+// "-allow-duplicates true") — reorderArgs needs to know these to correctly
+// tell a flag's value apart from the next positional argument. Keep this in
+// sync with any new flag.Bool(...) added to main().
+var boolFlagNames = map[string]bool{"allow-duplicates": true}
+
+// reorderArgs splits args into flags (with their values, in original
+// relative order) and bare positional arguments, so that gluing
+// flagArgs+positionals back together and handing that to flag.Parse always
+// parses cleanly regardless of the order the user actually typed them in —
+// Go's flag package otherwise stops parsing at the first non-flag argument.
+func reorderArgs(args []string, boolFlags map[string]bool) (flagArgs, positionals []string) {
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if a == "--" {
+			positionals = append(positionals, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			positionals = append(positionals, a)
+			i++
+			continue
+		}
+		flagArgs = append(flagArgs, a)
+		name := strings.TrimLeft(a, "-") // e.g. "--allow-duplicates" -> "allow-duplicates"
+		takesNoValue := strings.Contains(name, "=") || boolFlags[name]
+		if !takesNoValue && i+1 < len(args) {
+			flagArgs = append(flagArgs, args[i+1])
+			i += 2
+			continue
+		}
+		i++
+	}
+	return
+}
+
 func main() {
-	cssPath := flag.String("css", "", "path to a Figma \"copy as CSS\" export (plain text .css)")
-	screenshotPath := flag.String("screenshot", "", "path to a PNG/JPEG screenshot of the screen")
-	name := flag.String("name", "", "output bundle folder name, e.g. Customer-TICKET-123\n(required in single-file mode; an optional shared prefix in --batch mode)")
-	screenName := flag.String("screen-name", "", "Swift struct/file name (derived from content if omitted;\nignored in --batch mode, always derived per screen there)")
+	cssPath := flag.String("css", "", "path to a Figma \"copy as CSS\" export (plain text .css)\n(usually unnecessary — just pass the file directly, e.g. `figswiftui onboarding.css`)")
+	screenshotPath := flag.String("screenshot", "", "path to a PNG/JPEG screenshot of the screen\n(usually unnecessary — just pass the file directly)")
+	name := flag.String("name", "", "output bundle folder name, e.g. Customer-TICKET-123\n(optional: derived from content if omitted; an optional shared prefix in batch mode)")
+	screenName := flag.String("screen-name", "", "Swift struct/file name (derived from content if omitted;\nignored in batch mode, always derived per screen there)")
 	out := flag.String("out", "output", "output root directory")
 	matchProject := flag.String("match-project", "", "optional path to an existing Xcode project; extracted colors that\nexactly match an existing *.colorset are renamed to reuse it")
-	batchDir := flag.String("batch", "", "process a directory of screen pairs instead of a single --css/--screenshot:\neach <basename>.css (optionally with a same-basename .png/.jpg/.jpeg\nscreenshot alongside it) becomes its own output bundle")
-	allowDuplicates := flag.Bool("allow-duplicates", false, "in --batch mode, generate every screen even when its .css is\nbyte-identical to an earlier one, or its screenshot is a near-duplicate\n(default: skip duplicates and warn)")
+	batchDir := flag.String("batch", "", "process a directory of screen pairs\n(usually unnecessary — just pass the directory directly)")
+	allowDuplicates := flag.Bool("allow-duplicates", false, "in batch mode, generate every screen even when its .css is\nbyte-identical to an earlier one, or its screenshot is a near-duplicate\n(default: skip duplicates and warn)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "figswiftui — generate a SwiftUI screen + Assets.xcassets from a Figma CSS\nexport and/or a screenshot. Fully offline: no AI, no network calls.\n\n")
-		fmt.Fprintf(os.Stderr, "Usage:\n  figswiftui --css <file> [--screenshot <file>] --name <bundle-name> [flags]\n  figswiftui --screenshot <file> --name <bundle-name> [flags]\n  figswiftui --batch <dir> [--name <prefix>] [flags]\n\nFlags:\n")
+		fmt.Fprintf(os.Stderr, "Usage:\n  figswiftui <file.css>\n  figswiftui <file.css> <screenshot.png>\n  figswiftui <screenshot.png>\n  figswiftui <directory>\n\n")
+		fmt.Fprintf(os.Stderr, "Just pass the file(s) or a directory as plain arguments, in any order —\nfigswiftui tells a .css from a screenshot by extension, and a directory means\nbatch mode (each <basename>.css inside it, optionally paired with a\nsame-basename .png/.jpg/.jpeg, becomes its own output bundle). --name is\noptional everywhere; a sensible one is derived from the content when omitted.\n\nFlags (rarely needed — mainly for scripting or when a path's extension\ndoesn't match its real type):\n")
 		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nNote: --css must be plain-text (a real Figma \"copy as CSS\" paste). Screenshot-only\ninput (no --css) produces a color/dimension skeleton with real recognized text\n(via tesseract OCR, if installed — `brew install tesseract`) in place of a\nplaceholder; full VStack/HStack structure and spacing still needs a companion\nCSS export.\n\nIn --batch mode, a .css byte-identical to one already processed, or a screenshot\nthat's a near-duplicate of one already processed, is skipped with a warning —\npass --allow-duplicates to generate it anyway.\n")
+		fmt.Fprintf(os.Stderr, "\nNote: --css must be plain-text (a real Figma \"copy as CSS\" paste). Screenshot-only\ninput (no CSS) produces a color/dimension skeleton with real recognized text\n(via tesseract OCR, if installed — `brew install tesseract`) in place of a\nplaceholder; full VStack/HStack structure and spacing still needs a companion\nCSS export.\n\nIn batch mode, a .css byte-identical to one already processed, or a screenshot\nthat's a near-duplicate of one already processed, is skipped with a warning —\npass --allow-duplicates to generate it anyway.\n")
 	}
-	flag.Parse()
+	// Go's flag package stops parsing at the first non-flag argument, so
+	// "figswiftui screens/ --out X" would silently misparse "--out" and "X"
+	// as extra positional files instead of a flag. Reordering flags (with
+	// their values) before positionals lets them appear in any order, the
+	// way a user reaching for a plain "just pass the file" CLI would expect.
+	flagArgs, positionals := reorderArgs(os.Args[1:], boolFlagNames)
+	if err := flag.CommandLine.Parse(flagArgs); err != nil {
+		os.Exit(2)
+	}
+	for _, arg := range positionals {
+		info, statErr := os.Stat(arg)
+		if statErr != nil {
+			fmt.Fprintf(os.Stderr, "error: %s: %v\n", arg, statErr)
+			os.Exit(2)
+		}
+		switch {
+		case info.IsDir():
+			if *batchDir == "" {
+				*batchDir = arg
+			}
+		case strings.EqualFold(filepath.Ext(arg), ".css"):
+			if *cssPath == "" {
+				*cssPath = arg
+			}
+		case isScreenshotExt(filepath.Ext(arg)):
+			if *screenshotPath == "" {
+				*screenshotPath = arg
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "error: %s: unrecognized file type (expected .css, .png/.jpg/.jpeg, or a directory)\n", arg)
+			os.Exit(2)
+		}
+	}
 
 	if *batchDir != "" {
 		if *cssPath != "" || *screenshotPath != "" {
-			fmt.Fprintln(os.Stderr, "error: --batch cannot be combined with --css/--screenshot")
+			fmt.Fprintln(os.Stderr, "error: a directory can't be combined with a .css or screenshot input")
 			os.Exit(2)
 		}
 		if *screenName != "" {
-			fmt.Fprintln(os.Stderr, "warning: --screen-name is ignored in --batch mode (derived per screen)")
+			fmt.Fprintln(os.Stderr, "warning: --screen-name is ignored in batch mode (derived per screen)")
 		}
 		if err := runBatch(*batchDir, *name, *out, *matchProject, *allowDuplicates); err != nil {
 			fatalf("%v", err)
@@ -46,10 +117,6 @@ func main() {
 
 	if *cssPath == "" && *screenshotPath == "" {
 		flag.Usage()
-		os.Exit(2)
-	}
-	if *name == "" {
-		fmt.Fprintln(os.Stderr, "error: --name is required")
 		os.Exit(2)
 	}
 
@@ -62,6 +129,16 @@ func main() {
 }
 
 var screenshotExts = []string{".png", ".jpg", ".jpeg"}
+
+func isScreenshotExt(ext string) bool {
+	ext = strings.ToLower(ext)
+	for _, e := range screenshotExts {
+		if ext == e {
+			return true
+		}
+	}
+	return false
+}
 
 // batchCandidate is one <basename>.css (+ optional screenshot) pair
 // discovered by runBatch, before duplicate detection runs.
@@ -235,6 +312,9 @@ func generateScreen(cssPath, screenshotPath, bundleName, screenNameOverride, out
 	resolvedScreenName := screenNameOverride
 	if resolvedScreenName == "" {
 		resolvedScreenName = deriveScreenName(root)
+	}
+	if bundleName == "" {
+		bundleName = resolvedScreenName
 	}
 
 	colors := CollectColors(root)
