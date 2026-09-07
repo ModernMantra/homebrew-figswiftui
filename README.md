@@ -53,9 +53,20 @@ Run `figswiftui --help` for the full flag reference.
   install time) instead of a placeholder. Without tesseract on PATH,
   figswiftui detects that and falls back automatically.
 
-In batch mode, a `.css` byte-identical to one already processed, or a
-screenshot that's a near-duplicate of one already processed, is skipped
-with a warning — pass `--allow-duplicates` to generate it anyway.
+## Batch mode
+
+Point figswiftui at a directory and every `<basename>.css` inside it becomes
+its own output bundle, paired with a same-basename `.png`/`.jpg`/`.jpeg`
+screenshot when one exists alongside it. `--name` becomes an optional shared
+prefix (`figswiftui ./screens --name Customer` → `Customer-<basename>`); one
+failing screen is reported and skipped rather than aborting the whole batch.
+
+**Duplicate detection**: a `.css` byte-identical to one already processed in
+the same run (SHA-256) is skipped automatically, and so is a screenshot
+that's a *near*-duplicate of one already processed (perceptual hashing —
+catches a re-export or recompression even when the bytes differ, not just
+exact copies). Both are reported with a warning naming which earlier file
+they duplicate. Pass `--allow-duplicates` to generate every screen anyway.
 
 ## Known limitations
 
