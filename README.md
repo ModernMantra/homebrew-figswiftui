@@ -53,6 +53,16 @@ Run `figswiftui --help` for the full flag reference.
   install time) instead of a placeholder. Without tesseract on PATH,
   figswiftui detects that and falls back automatically.
 
+**Giving both together** does more than attach a reference image: CSS still
+drives all the structure and colors, but a componentized button (Figma's
+export only names the *component* — "Skip"/"Next" — not necessarily the
+true rendered/localized text) gets its real label filled in from the
+screenshot via OCR, positionally matched in reading order. It's a
+best-effort correlation, not a guaranteed-correct one, so the label still
+gets a `// TODO` comment — just reading "auto-filled from the screenshot
+via OCR, verify it's correct" instead of the generic "confirm this label
+matches the rendered/localized text".
+
 ## Batch mode
 
 Point figswiftui at a directory and every `<basename>.css` inside it becomes

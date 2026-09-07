@@ -30,6 +30,16 @@ type Node struct {
 	DotCount       int
 	DotActiveIndex int
 	DotActiveColor string // normalized hex of the active dot's fill, if any
+
+	// DisplayTextOverride, when set, is used as this node's rendered text
+	// instead of deriving it from Block.Name — e.g. a button's real
+	// OCR-recognized label (see applyOCRButtonLabels). Kept separate from
+	// Block.Name, which stays the CSS component name and is still what
+	// action-closure variable names (onNext/onPrevious/onSkip) derive
+	// from — filling in real display text should never silently rename
+	// onNext to onWeiter just because the rendered/localized text differs.
+	DisplayTextOverride string
+	OCRVerified         bool
 }
 
 type stackFrame struct {

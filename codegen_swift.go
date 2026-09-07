@@ -138,7 +138,11 @@ func (g *swiftGen) writeNode(b *strings.Builder, n *Node, depth int) {
 
 	case KindButton:
 		varName := "on" + sanitizeIdentifier(n.Block.Name, true)
-		fmt.Fprintf(b, "%s// TODO(figswiftui): confirm this label matches the rendered/localized text\n", ind)
+		if n.OCRVerified {
+			fmt.Fprintf(b, "%s// TODO(figswiftui): label auto-filled from the screenshot via OCR — verify it's correct\n", ind)
+		} else {
+			fmt.Fprintf(b, "%s// TODO(figswiftui): confirm this label matches the rendered/localized text\n", ind)
+		}
 		fmt.Fprintf(b, "%sButton(%s, action: %s)\n", ind, swiftStringLiteral(textOf(n)), varName)
 		if labelColor := g.buttonLabelColor(n); labelColor != "" {
 			fmt.Fprintf(b, "%s    .foregroundStyle(Color(\"%s\"))\n", ind, labelColor)
@@ -207,6 +211,9 @@ func (g *swiftGen) writeNode(b *strings.Builder, n *Node, depth int) {
 }
 
 func textOf(n *Node) string {
+	if n.DisplayTextOverride != "" {
+		return n.DisplayTextOverride
+	}
 	name := strings.TrimSpace(n.Block.Name)
 	if genericLayerNameRe.MatchString(name) {
 		return "TODO"

@@ -307,6 +307,17 @@ func generateScreen(cssPath, screenshotPath, bundleName, screenNameOverride, out
 
 	if root == nil {
 		root = skeletonFromScreenshot(screenshot)
+	} else if screenshot != nil {
+		// Both a CSS export and a screenshot were given: CSS still drives
+		// structure/colors, but OCR on the screenshot can recover real
+		// button labels that Figma's export only names generically (the
+		// component, e.g. "Skip"/"Next" — not necessarily the true
+		// rendered/localized string).
+		if ocrLines, ocrErr := recognizeTextFromBytes(screenshot.CroppedPNG); ocrErr == nil {
+			applyOCRButtonLabels(root, ocrLines)
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: OCR unavailable for button-label verification (%v)\n", ocrErr)
+		}
 	}
 
 	resolvedScreenName := screenNameOverride

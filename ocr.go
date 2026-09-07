@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -14,6 +15,69 @@ import (
 type OCRLine struct {
 	Text       string
 	X, Y, W, H int
+}
+
+// applyOCRButtonLabels finds each KindButton node in the tree (document
+// order) and, when a companion screenshot's OCR found real text, fills in
+// its true rendered label as a DisplayTextOverride — Figma's CSS export
+// names the button *component* (e.g. "Skip"/"Next"), not necessarily the
+// true localized/rendered string. Matching is positional, not exact: OCR
+// lines are bucketed into coarse rows and sorted top-to-bottom then
+// left-to-right, then assigned to buttons in that same order. This is a
+// best-effort correlation — there's no real layout-position resolver here,
+// just a reading-order heuristic — which is why the button's TODO comment
+// still asks for manual verification, just worded differently once a real
+// candidate has been filled in (see codegen_swift.go's KindButton case).
+func applyOCRButtonLabels(root *Node, ocrLines []OCRLine) {
+	var buttons []*Node
+	var collect func(n *Node)
+	collect = func(n *Node) {
+		if n.Kind == KindButton {
+			buttons = append(buttons, n)
+		}
+		for _, c := range n.Children {
+			collect(c)
+		}
+	}
+	collect(root)
+	if len(buttons) == 0 {
+		return
+	}
+
+	// Button labels are almost always 1-2 words ("Skip", "Weiter", "Get
+	// Started") — a 3+ word line is far more likely to be a heading that
+	// happens to be short than an actual button. Headings also tend to be
+	// rendered larger than a button label even when short, so a line
+	// notably taller than this screenshot's own median line height is
+	// excluded too, catching the cases word count alone wouldn't.
+	medianH := medianLineHeight(ocrLines)
+	var candidates []OCRLine
+	for _, l := range ocrLines {
+		wc := len(strings.Fields(l.Text))
+		if wc < 1 || wc > 2 {
+			continue
+		}
+		if medianH > 0 && float64(l.H) > medianH*1.3 {
+			continue
+		}
+		candidates = append(candidates, l)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		const rowHeight = 20 // px; groups same-row text despite small OCR Y jitter
+		ri, rj := candidates[i].Y/rowHeight, candidates[j].Y/rowHeight
+		if ri != rj {
+			return ri < rj
+		}
+		return candidates[i].X < candidates[j].X
+	})
+
+	for i, b := range buttons {
+		if i >= len(candidates) {
+			break
+		}
+		b.DisplayTextOverride = candidates[i].Text
+		b.OCRVerified = true
+	}
 }
 
 // tesseractAvailable reports whether the tesseract CLI is on PATH. OCR is
